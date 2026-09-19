@@ -1,0 +1,23 @@
+# PB-0 evidence, captured 2026-09-19
+# repo: VitroTech/coderoot-gate-spike (private)
+
+== step 4: tokenless publish (run 35429286258) ==
+  npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
+  + @vitrotech/gate-spike@0.0.2
+  credential references in the whole job log: 0
+
+== step 5: --provenance refused from a private repo (run 35429212532) ==
+  npm notice publish Signed provenance statement with source and build information from GitHub Actions
+  npm notice publish Provenance statement published to transparency log: https://search.sigstore.dev/?logIndex=2891565617
+  npm error code E422
+  npm error 422 Unprocessable Entity - PUT https://registry.npmjs.org/@vitrotech%2fgate-spike - Error verifying sigstore provenance bundle: Unsupported GitHub Actions source repository visibility: "private". Only public source repositories are supported when publishing with provenance.
+
+== step 6a: publish with no npm identity ==
+  npm error code ENEEDAUTH
+  npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+
+== step 6b: publish from a DIFFERENT workflow in the SAME repo (run 35429351550) ==
+  ^[[36;1mecho "refused, as designed:"^[[0m
+  npm error code ENEEDAUTH
+  npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+  refused, as designed:

@@ -1,7 +1,7 @@
 # PB-0 — publish-mechanism spike: the release runner as npm trusted publisher
 
-Status: **partial — four items await the GitHub repo.** The npm side is resolved. Everything that does not require
-publishing to the public registry is done and is reproducible from this directory.
+Status: **steps 1-4 and 6-8 done and evidenced. Step 5 (the provenance statement) is blocked by
+repository visibility, which is a finding in itself.** Reproducible from this repository.
 Written 2026-09-15 for Pablo's review. Intended to settle the wording of the ADR-015 §3
 amendment.
 
@@ -23,18 +23,17 @@ No keys, no Vault, nothing on `secure.coderoot.app`.
 The granular token used for the placeholder was Pawel's and is his to delete; this note records
 that it was used once, for step 2 only, and that every later publish goes through the workflow.
 
-**Remaining, and all waiting on the same thing — the GitHub repo:**
+**Done on 2026-09-19**, in `VitroTech/coderoot-gate-spike`:
 
-| item | needs |
+| item | result |
 |---|---|
-| the provenance statement as published | one `--provenance` dispatch |
-| the "direct publish fails" transcripts | the repo, to attempt from a second identity |
-| confirmation that dispatch publishes with no stored token | the repo |
-| the package settings as configured | a screenshot/export once the repo is bound |
+| dispatch publishes with no stored token | **yes** — `@vitrotech/gate-spike@0.0.2`, run 35429286258 |
+| credential references anywhere in the job log | **zero** |
+| publish refused with no npm identity | yes |
+| publish refused from a *different workflow in the same repo* | **yes** — the key result |
+| the provenance statement as published | **blocked: private repository.** See §4 |
 
-`coderoot-gate-spike` under VitroTech, write access, Actions enabled. Requested from David and
-Pablo 2026-09-18. **The repo name is load-bearing**: npm binds trust to the repo *and* the
-workflow path, so `coderoot-gate-spike` + `release.yml` cannot be renamed without reconfiguring.
+Evidence: [`evidence/dispatch-evidence.log`](evidence/dispatch-evidence.log).
 
 ### Baseline, captured before the gate exists
 
@@ -50,8 +49,18 @@ $ coderoot verify --file gate-spike-0.0.1.tgz
   reason  No attested record exists for these bytes.
 ```
 
-After the trusted-publisher dispatch republishes it with provenance, the same command is the
-"after" half. That pairing is the most legible demonstration in this note.
+After the gate published 0.0.2, the same command still answers `unregistered`:
+
+```
+$ coderoot verify --file gate-spike-0.0.2.tgz
+! unregistered
+  digest  sha256:9d7f6982beeb98ea8ff71a99b8c8a31b475977e3ad0b2f55c92fc7a35b731e2f
+```
+
+That is correct and worth stating plainly, because it is easy to expect otherwise. **Publishing
+through the gate proves who published; it does not create an attestation.** Writing the
+attestation is PB-2/PB-3, and until that exists the gate's own client cannot recognise the gate's
+own output. PB-0 closes the publish half only.
 
 ### One thing to confirm on the first dispatch
 
@@ -150,10 +159,36 @@ the interesting case and needs the live package.
 
 ---
 
-## 4. Provenance — recommendation: **on**
+## 4. Provenance — recommendation: **on, and the gate repo must be public**
 
-*The statement as published is blocked; the recommendation is not, and is the item ADR-015 §3
-actually needs.*
+Measured 2026-09-19, and this changes the recommendation from a preference into a constraint.
+
+**npm refuses `--provenance` from a private repository.** The failure is late and specific: the
+OIDC handshake succeeds, npm signs the statement and writes it to the Sigstore transparency log
+(logIndex 2891565617), and only then the registry rejects the upload:
+
+```
+npm notice publish Signed provenance statement with source and build information from GitHub Actions
+npm notice publish Provenance statement published to transparency log: https://search.sigstore.dev/?logIndex=2891565617
+npm error code E422
+npm error 422 Unprocessable Entity - Error verifying sigstore provenance bundle:
+  Unsupported GitHub Actions source repository visibility: "private".
+  Only public source repositories are supported when publishing with provenance.
+```
+
+Two things follow.
+
+**Trusted publishing and provenance have different prerequisites.** The tokenless publish works
+from a private repo; provenance does not. A gate can have one without the other, and the choice
+is now explicit rather than accidental.
+
+**If ADR-015 §3 requires provenance, it also requires the gate's release repository to be
+public.** That is a real disclosure decision - the repo's workflow, its history and its structure
+all become readable - and it should be made deliberately rather than discovered during a release.
+The spike ran with `--provenance` off to prove the rest of the mechanism; the flag is an input on
+the workflow, ready to exercise the moment visibility changes.
+
+*The recommendation below is unchanged and is the item ADR-015 §3 actually needs.*
 
 `npm publish --provenance` makes npm generate a signed SLSA attestation recording which
 repository, workflow and commit produced the artifact, logged in a public transparency log.
@@ -210,6 +245,28 @@ the string and execute. The tarball URL is also constrained to `https://`.
 
 **5.5 Blast radius.** `contents: read` means a compromised job cannot write to the repository,
 so it cannot persist by modifying the workflow it is running in.
+
+**5.6 A second workflow in the same repository cannot publish.** This is the strongest result in
+the spike and it was measured, not assumed. `rogue.yml` is identical to `release.yml` in every
+way that matters - same repo, same ref, same `id-token: write`, same OIDC request - and differs
+only in filename. npm refused it:
+
+```
+npm error code ENEEDAUTH
+npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+```
+
+So npm's trust is bound to the repository *and the workflow path*, not to the repository alone.
+An attacker who can add a workflow to a trusted repo still cannot publish; they would have to
+modify `release.yml` itself, which `contents: read` and branch protection are there to prevent.
+The rogue workflow is kept in the repo, with its exit inverted, so a future change that widens
+the binding fails the run instead of passing silently.
+
+**5.7 `setup-node`'s `registry-url` injects a credential.** Found on the first dispatch. Setting
+it makes `setup-node` write an `.npmrc` with an auth line and export `NODE_AUTH_TOKEN` into every
+later step - the exact stored credential this spike exists to remove. Trusted publishing needs
+neither, so the input was removed. A spike that had kept it would have "proved" tokenless
+publishing while carrying a token in the environment the whole time.
 
 ### What it does **not** defend against
 
