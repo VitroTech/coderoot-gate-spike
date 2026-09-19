@@ -31,6 +31,11 @@ on:
         required: false
         default: false
         type: boolean
+      provenance:
+        description: "Publish with --provenance. Requires a PUBLIC repository (npm E422 otherwise)."
+        required: false
+        default: false
+        type: boolean
 
 # `workflow_dispatch` only. Deliberately NOT `pull_request_target`, which runs
 # with repository write scope against attacker-authored code - the entry point
@@ -120,10 +125,31 @@ jobs:
       # workflow path, ref) against the package's trusted-publisher settings.
       # --provenance makes npm attest what built this: see note §4 for why the
       # build source it names is CodeRoot's repo, not the customer's.
+      # `--provenance` is opt-in because npm refuses it from a private
+      # repository: the OIDC handshake succeeds, npm signs the statement and
+      # logs it to Sigstore, and only then answers 422 "Only public source
+      # repositories are supported when publishing with provenance". Measured
+      # 2026-09-19; see note §4. The tokenless publish itself is unaffected.
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        run: npm publish package.tgz --provenance --access public
+        env:
+          PROVENANCE: ${{ inputs.provenance }}
+        run: |
+          set -euo pipefail
+          if [ "$PROVENANCE" = "true" ]; then
+            npm publish package.tgz --provenance --access public
+          else
+            npm publish package.tgz --access public
+          fi
 
       - name: Dry run (resolve only)
         if: ${{ inputs.dry_run }}
-        run: npm publish package.tgz --provenance --access public --dry-run
+        env:
+          PROVENANCE: ${{ inputs.provenance }}
+        run: |
+          set -euo pipefail
+          if [ "$PROVENANCE" = "true" ]; then
+            npm publish package.tgz --provenance --access public --dry-run
+          else
+            npm publish package.tgz --access public --dry-run
+          fi
