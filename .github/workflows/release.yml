@@ -17,12 +17,14 @@ on:
   workflow_dispatch:
     inputs:
       tarball_url:
-        description: "HTTPS URL of the tarball to publish"
-        required: true
+        description: "HTTPS URL of a tarball to publish. Leave empty to pack ./package."
+        required: false
+        default: ""
         type: string
       tarball_sha256:
-        description: "Expected sha256 of the tarball (bare hex or sha256:<hex>)"
-        required: true
+        description: "Expected sha256 of that tarball (required when tarball_url is set)"
+        required: false
+        default: ""
         type: string
       dry_run:
         description: "Resolve and verify, but do not publish"
@@ -58,9 +60,13 @@ jobs:
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-          # No cache. A poisoned Actions cache is a supply-chain entry point
-          # into a job that can publish; the spike trades ~20s for that. §5.3.
+          # Deliberately NO registry-url. It makes setup-node write an .npmrc
+          # with an auth line and export NODE_AUTH_TOKEN into every later step -
+          # exactly the stored credential this spike exists to remove. Trusted
+          # publishing needs neither. Found on the first dispatch; see note §5.6.
+          #
+          # No cache either: a poisoned Actions cache is a supply-chain entry
+          # point into a job that can publish, and the spike trades ~20s for it.
           cache: ""
 
       - name: Require npm with trusted publishing support
@@ -68,7 +74,20 @@ jobs:
           npm install -g npm@^11.5.1
           echo "npm $(npm --version)"
 
+      # Two sources, one rule: whatever is published must be bytes this job can
+      # name by digest before it sends them.
+      - name: Pack the repository's package
+        if: ${{ inputs.tarball_url == '' }}
+        run: |
+          set -euo pipefail
+          # No `npm install` anywhere in this job: nothing runs a lifecycle
+          # script next to a publishable OIDC token. See note §5, gap 1.
+          npm pack ./package --pack-destination . >/dev/null
+          mv ./*.tgz package.tgz
+          echo "packed sha256:$(shasum -a 256 package.tgz | cut -d' ' -f1)"
+
       - name: Fetch the tarball and verify its digest
+        if: ${{ inputs.tarball_url != '' }}
         env:
           TARBALL_URL: ${{ inputs.tarball_url }}
           EXPECTED: ${{ inputs.tarball_sha256 }}
@@ -81,6 +100,9 @@ jobs:
             https://*) ;;
             *) echo "refusing non-https tarball url"; exit 1 ;;
           esac
+          if [ -z "$EXPECTED" ]; then
+            echo "refusing a tarball url with no expected digest"; exit 1
+          fi
 
           curl -fsSL --proto '=https' --tlsv1.2 -o package.tgz "$TARBALL_URL"
 
