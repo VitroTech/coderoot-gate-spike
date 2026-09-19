@@ -1,0 +1,107 @@
+# PB-0 — trusted-publisher spike.
+#
+# Publishes a tarball to npm using npm's trusted publishing (OIDC). There is no
+# NPM_TOKEN in this repository, in its secrets, or in this file: npm is told to
+# trust *this repo running this workflow file*, and the runner proves that with
+# a short-lived OIDC token it requests at publish time.
+#
+# Every hardening choice below is deliberate and is argued in PB-0-NOTE.md §5.
+# The short version: trusted publishing removes the stored credential, but it
+# does not remove the runner as a target. The OIDC token still exists in runner
+# memory for the length of the job, so the job is kept small, pinned, and
+# unreachable from untrusted input.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tarball_url:
+        description: "HTTPS URL of the tarball to publish"
+        required: true
+        type: string
+      tarball_sha256:
+        description: "Expected sha256 of the tarball (bare hex or sha256:<hex>)"
+        required: true
+        type: string
+      dry_run:
+        description: "Resolve and verify, but do not publish"
+        required: false
+        default: false
+        type: boolean
+
+# `workflow_dispatch` only. Deliberately NOT `pull_request_target`, which runs
+# with repository write scope against attacker-authored code - the entry point
+# the Mini Shai-Hulud class relies on. See note §5.1.
+permissions:
+  contents: read
+  # The single permission trusted publishing needs: request an OIDC token.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # No `environment:` with stored secrets, and no reusable workflow: npm binds
+    # trust to this repo + this file path, so indirection widens what is trusted.
+    timeout-minutes: 10
+
+    steps:
+      # Pinned to a commit SHA, not a tag. A tag is mutable: whoever controls
+      # the action's repo can repoint v4 at new code, which then runs inside a
+      # job holding a publishable OIDC token. See note §5.2.
+      - name: Check out (pinned)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node (pinned)
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          # No cache. A poisoned Actions cache is a supply-chain entry point
+          # into a job that can publish; the spike trades ~20s for that. §5.3.
+          cache: ""
+
+      - name: Require npm with trusted publishing support
+        run: |
+          npm install -g npm@^11.5.1
+          echo "npm $(npm --version)"
+
+      - name: Fetch the tarball and verify its digest
+        env:
+          TARBALL_URL: ${{ inputs.tarball_url }}
+          EXPECTED: ${{ inputs.tarball_sha256 }}
+        run: |
+          set -euo pipefail
+          # Values from `inputs` are referenced through the environment, never
+          # interpolated into the script body, so a crafted input cannot break
+          # out of the string and run as shell. §5.4.
+          case "$TARBALL_URL" in
+            https://*) ;;
+            *) echo "refusing non-https tarball url"; exit 1 ;;
+          esac
+
+          curl -fsSL --proto '=https' --tlsv1.2 -o package.tgz "$TARBALL_URL"
+
+          expected="${EXPECTED#sha256:}"
+          actual="$(shasum -a 256 package.tgz | cut -d' ' -f1)"
+          if [ "$expected" != "$actual" ]; then
+            echo "digest mismatch"
+            echo "  expected $expected"
+            echo "  actual   $actual"
+            exit 1
+          fi
+          echo "tarball verified: sha256:$actual"
+
+      # Publishes with no token. npm matches the OIDC token's claims (repo,
+      # workflow path, ref) against the package's trusted-publisher settings.
+      # --provenance makes npm attest what built this: see note §4 for why the
+      # build source it names is CodeRoot's repo, not the customer's.
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        run: npm publish package.tgz --provenance --access public
+
+      - name: Dry run (resolve only)
+        if: ${{ inputs.dry_run }}
+        run: npm publish package.tgz --provenance --access public --dry-run

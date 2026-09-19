@@ -1,0 +1,11 @@
+{
+  "name": "@vitrotech/gate-spike",
+  "version": "0.0.2",
+  "description": "PB-0 trusted-publisher spike. Throwaway package; do not depend on it.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VitroTech/coderoot-gate-spike.git"
+  },
+  "files": ["README.md"]
+}
