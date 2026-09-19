@@ -21,3 +21,13 @@
   npm error code ENEEDAUTH
   npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
   refused, as designed:
+
+== step 6c: publish from a DIFFERENT REPO (Poulman/coderoot-gate-spike-rogue, run 35430111055) ==
+  npm error code ENEEDAUTH
+  npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+  refused, as designed:
+
+All three identities in step 6 refused:
+  6a  no npm identity at all
+  6b  a different workflow file in the SAME repo
+  6c  a different repository entirely

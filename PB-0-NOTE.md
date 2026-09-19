@@ -157,6 +157,31 @@ That last block is the *shape* of the step-6 refusal, not the real transcript: i
 unauthenticated publish is refused, but not that a **wrongly-authenticated** one is — which is
 the interesting case and needs the live package.
 
+### The package settings, as the registry reports them
+
+Deliverable item: *the npm package settings as configured*. Rather than a screenshot of the npm
+UI, here is the registry's own record, which is the same fact in a form anyone can re-read
+([`evidence/package-settings.log`](evidence/package-settings.log)):
+
+```
+0.0.1:
+  _npmUser.name              'pawelbudnik15'
+  _npmUser.trustedPublisher  None
+
+0.0.2:
+  _npmUser.name              'GitHub Actions'
+  _npmUser.email             'npm-oidc-no-reply@github.com'
+  _npmUser.trustedPublisher  {'id': 'github', 'oidcConfigId': 'oidc:3ae54681-…'}
+```
+
+That pair is the whole spike in four lines. **0.0.1** was published by a person holding a token.
+**0.0.2** was published by a workflow holding nothing, and npm records the trusted-publisher
+binding against the version rather than taking our word for it.
+
+Configured by Pawel (2026-09-17): trusted publishing bound to
+`VitroTech/coderoot-gate-spike` running `.github/workflows/release.yml`, 2FA required, bypass
+tokens disallowed.
+
 ---
 
 ## 4. Provenance — recommendation: **on, and the gate repo must be public**
@@ -245,6 +270,10 @@ the string and execute. The tarball URL is also constrained to `https://`.
 
 **5.5 Blast radius.** `contents: read` means a compromised job cannot write to the repository,
 so it cannot persist by modifying the workflow it is running in.
+
+**5.6a A different repository cannot publish.** `Poulman/coderoot-gate-spike-rogue` requests an
+OIDC token exactly as `release.yml` does and attempts the same publish. npm refused it
+(run 35430111055). Trust is bound to the repository, so holding a GitHub identity is not enough.
 
 **5.6 A second workflow in the same repository cannot publish.** This is the strongest result in
 the spike and it was measured, not assumed. `rogue.yml` is identical to `release.yml` in every
