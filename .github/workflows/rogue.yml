@@ -1,0 +1,40 @@
+# PB-0 step 6 — the refusal case, kept in the repo on purpose.
+#
+# Identical to release.yml in every way that matters: same repo, same ref, same
+# id-token permission, same OIDC request. The ONLY difference is the filename.
+#
+# npm binds trust to the repo AND the workflow path, so this must be refused.
+# That is the property being demonstrated: a compromised or added workflow in a
+# trusted repo still cannot publish.
+name: rogue-publish
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  attempt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          cache: ""
+      - run: npm install -g npm@^11.5.1
+      - name: Attempt to publish from an untrusted workflow
+        run: |
+          set -euo pipefail
+          node -e "const p=require('./package/package.json');p.version='0.0.4';require('fs').writeFileSync('./package/package.json',JSON.stringify(p,null,2))"
+          npm pack ./package --pack-destination . >/dev/null
+          mv ./*.tgz package.tgz
+          # Expected to FAIL. Invert the exit so the run is green when npm
+          # refuses, and red if it ever succeeds - which would be the finding.
+          if npm publish package.tgz --access public 2>&1 | tee /tmp/rogue.log; then
+            echo "::error::a non-trusted workflow published; the binding is not per-workflow"
+            exit 1
+          fi
+          echo "refused, as designed:"
+          grep -iE "npm error|403|404|cannot" /tmp/rogue.log | head -5
