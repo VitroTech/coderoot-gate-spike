@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# PB-0 — assert the hardening properties the note claims.
+# Static checks for selected release-workflow properties.
 #
-# Every check here corresponds to a claim in PB-0-NOTE.md §5. If a future edit
-# weakens the workflow, this fails rather than letting the note drift from the
-# file it describes.
+# These text-based checks are smoke tests, not a complete security audit.
 
 set -euo pipefail
 WF="$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/release.yml"
@@ -23,20 +21,20 @@ lacks(){ ! grep -qE -e "$1" <<<"$BODY"; }
 
 echo "workflow: ${WF#"$PWD"/}"
 has 'workflow_dispatch:';                    check "dispatch-triggered"            $?
-lacks 'pull_request_target';                 check "no pull_request_target (§5.1)" $?
+lacks 'pull_request_target';                 check "no pull_request_target"        $?
 lacks 'secrets\.';                           check "no secrets referenced"         $?
-lacks 'NPM_TOKEN|_authToken|NODE_AUTH_TOKEN';check "no npm credential (§1)"        $?
+lacks 'NPM_TOKEN|_authToken|NODE_AUTH_TOKEN';check "no npm credential"             $?
 has 'id-token:[[:space:]]*write';            check "id-token: write"               $?
 has 'contents:[[:space:]]*read';             check "contents: read only"           $?
-has 'cache:[[:space:]]*""';                  check "actions cache off (§5.3)"      $?
-has '--provenance';                          check "--provenance (§4)"             $?
+has 'cache:[[:space:]]*""';                  check "actions cache off"             $?
+has '--provenance';                          check "--provenance"                  $?
 has 'shasum -a 256';                         check "tarball digest enforced"       $?
 grep -qE '\$\{\{[[:space:]]*inputs\.' <<<"$RUNS" && r=1 || r=0
-check "inputs reach shell via env only (§5.4)" "$r"
+check "inputs reach shell via env only" "$r"
 
 # Unpinned = any `uses:` whose ref is not a 40-char SHA.
 if grep -oE 'uses:[[:space:]]*\S+' <<<"$BODY" | grep -vqE '@[0-9a-f]{40}$'; then r=1; else r=0; fi
-check "all actions pinned to SHAs (§5.2)" "$r"
+check "all actions pinned to SHAs" "$r"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -1,4 +1,4 @@
-# PB-0 step 6 — the refusal case, kept in the repo on purpose.
+# Untrusted-workflow refusal test.
 #
 # Identical to release.yml in every way that matters: same repo, same ref, same
 # id-token permission, same OIDC request. The ONLY difference is the filename.

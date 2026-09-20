@@ -1,7 +1,7 @@
 {
   "name": "@vitrotech/gate-spike",
   "version": "0.0.2",
-  "description": "PB-0 trusted-publisher spike. Throwaway package; do not depend on it.",
+  "description": "Trusted-publisher spike. Throwaway package; do not depend on it.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
