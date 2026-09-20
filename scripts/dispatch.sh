@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PB-0 step: dispatch the release workflow with a tarball reference.
+# Dispatch the release workflow with a tarball reference.
 #
 # This is the "from a script" half of the spike. Note what is NOT here: no npm
 # token, no registry credential, no secret of any kind. The only credential is

@@ -1,15 +1,12 @@
-# PB-0 — trusted-publisher spike.
+# Trusted-publisher spike.
 #
 # Publishes a tarball to npm using npm's trusted publishing (OIDC). There is no
 # NPM_TOKEN in this repository, in its secrets, or in this file: npm is told to
 # trust *this repo running this workflow file*, and the runner proves that with
 # a short-lived OIDC token it requests at publish time.
 #
-# Every hardening choice below is deliberate and is argued in PB-0-NOTE.md §5.
-# The short version: trusted publishing removes the stored credential, but it
-# does not remove the runner as a target. The OIDC token still exists in runner
-# memory for the length of the job, so the job is kept small, pinned, and
-# unreachable from untrusted input.
+# Trusted publishing removes the stored npm credential, but the runner remains
+# a target: code running in this job can access its publishing identity.
 
 name: release
 
@@ -37,9 +34,7 @@ on:
         default: false
         type: boolean
 
-# `workflow_dispatch` only. Deliberately NOT `pull_request_target`, which runs
-# with repository write scope against attacker-authored code - the entry point
-# the Mini Shai-Hulud class relies on. See note §5.1.
+# Manual dispatch only; no pull-request trigger.
 permissions:
   contents: read
   # The single permission trusted publishing needs: request an OIDC token.
@@ -55,7 +50,7 @@ jobs:
     steps:
       # Pinned to a commit SHA, not a tag. A tag is mutable: whoever controls
       # the action's repo can repoint v4 at new code, which then runs inside a
-      # job holding a publishable OIDC token. See note §5.2.
+      # job holding a publishable OIDC token.
       - name: Check out (pinned)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -65,10 +60,8 @@ jobs:
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "22"
-          # Deliberately NO registry-url. It makes setup-node write an .npmrc
-          # with an auth line and export NODE_AUTH_TOKEN into every later step -
-          # exactly the stored credential this spike exists to remove. Trusted
-          # publishing needs neither. Found on the first dispatch; see note §5.6.
+          # No registry-url: this workflow uses trusted publishing rather than
+          # token-based npm authentication configuration.
           #
           # No cache either: a poisoned Actions cache is a supply-chain entry
           # point into a job that can publish, and the spike trades ~20s for it.
@@ -85,8 +78,8 @@ jobs:
         if: ${{ inputs.tarball_url == '' }}
         run: |
           set -euo pipefail
-          # No `npm install` anywhere in this job: nothing runs a lifecycle
-          # script next to a publishable OIDC token. See note §5, gap 1.
+          # Pack the local test package. Keep it free of lifecycle scripts:
+          # npm pack can execute them inside this OIDC-enabled job.
           npm pack ./package --pack-destination . >/dev/null
           mv ./*.tgz package.tgz
           echo "packed sha256:$(shasum -a 256 package.tgz | cut -d' ' -f1)"
@@ -100,7 +93,7 @@ jobs:
           set -euo pipefail
           # Values from `inputs` are referenced through the environment, never
           # interpolated into the script body, so a crafted input cannot break
-          # out of the string and run as shell. §5.4.
+          # out of the string and run as shell.
           case "$TARBALL_URL" in
             https://*) ;;
             *) echo "refusing non-https tarball url"; exit 1 ;;
@@ -121,15 +114,9 @@ jobs:
           fi
           echo "tarball verified: sha256:$actual"
 
-      # Publishes with no token. npm matches the OIDC token's claims (repo,
-      # workflow path, ref) against the package's trusted-publisher settings.
-      # --provenance makes npm attest what built this: see note §4 for why the
-      # build source it names is CodeRoot's repo, not the customer's.
-      # `--provenance` is opt-in because npm refuses it from a private
-      # repository: the OIDC handshake succeeds, npm signs the statement and
-      # logs it to Sigstore, and only then answers 422 "Only public source
-      # repositories are supported when publishing with provenance". Measured
-      # 2026-09-19; see note §4. The tokenless publish itself is unaffected.
+      # Publish using the package's configured trusted-publisher identity.
+      # Explicit --provenance is optional here because npm requires a public
+      # source repository for provenance.
       - name: Publish
         if: ${{ !inputs.dry_run }}
         env:
