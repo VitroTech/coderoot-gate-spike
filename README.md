@@ -8,7 +8,7 @@ requested at publish time. There is no `NPM_TOKEN` here, in the repo secrets, or
 
 This is a throwaway test package, not a production publishing service. Publishing with
 provenance requires a public source repository; the release workflow exposes a `provenance`
-input for that test.
+input for it.
 
 ## Layout
 
@@ -19,6 +19,7 @@ package/                        the throwaway package source
 scripts/dispatch.sh             start a publish from a tarball reference
 scripts/check-workflow.sh       static checks on the release workflow
 scripts/local-dry-run.sh        local packaging, digest, and registry rehearsal
+evidence/                       captured output from the publish runs
 ```
 
 ## Run it
@@ -36,3 +37,43 @@ a real publish; the rogue workflow also attempts a real publish and expects it t
 **The repo name and workflow path are load-bearing.** npm binds trust to
 `VitroTech/coderoot-gate-spike` running `.github/workflows/release.yml`; renaming either breaks
 the binding and the publish is refused.
+
+## What npm records
+
+```
+0.0.1   _npmUser  pawelbudnik15      trustedPublisher: none
+0.0.2   _npmUser  GitHub Actions     trustedPublisher: github
+0.0.3   _npmUser  GitHub Actions     trustedPublisher: github   + provenance
+```
+
+0.0.1 was published by a person holding a token. 0.0.2 and 0.0.3 came from the workflow, which
+holds none.
+
+```bash
+curl -s https://registry.npmjs.org/@vitrotech/gate-spike \
+  | jq '.versions | to_entries[] | {version: .key, publisher: .value._npmUser.name}'
+```
+
+### Provenance
+
+0.0.3 was published with `--provenance`. npm stores the signed SLSA statement against the
+version, and it names the repository and workflow file that built the package
+([`evidence/provenance-statement.log`](evidence/provenance-statement.log)):
+
+```
+subject   : pkg:npm/%40vitrotech/gate-spike@0.0.3
+workflow  : repository  https://github.com/VitroTech/coderoot-gate-spike
+            path        .github/workflows/release.yml
+            ref         refs/heads/main
+builder   : https://github.com/actions/runner/github-hosted
+```
+
+Sigstore transparency log index 2918465003.
+
+```bash
+curl -s https://registry.npmjs.org/@vitrotech/gate-spike \
+  | jq '.versions["0.0.3"].dist.attestations'
+```
+
+npm refuses `--provenance` while the source repository is private, answering 422 after it has
+already signed the statement and written it to the transparency log.

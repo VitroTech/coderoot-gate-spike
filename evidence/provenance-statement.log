@@ -1,0 +1,20 @@
+# Provenance statement as published, captured 2026-09-23T10:25:08Z
+# @vitrotech/gate-spike@0.0.3, run 35848408168
+
+$ npm publish package.tgz --provenance --access public
+npm notice publish Signed provenance statement with source and build information from GitHub Actions
+npm notice publish Provenance statement published to transparency log: https://search.sigstore.dev/?logIndex=2918465003
++ @vitrotech/gate-spike@0.0.3
+
+# The statement itself (SLSA v1 predicate, decoded from the DSSE envelope):
+
+predicateType: https://slsa.dev/provenance/v1
+subject      : pkg:npm/%40vitrotech/gate-spike@0.0.3
+digest       : sha512:f53b85c4b6c0ece163cf292caa2af5f4...
+buildType    : https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1
+workflow     : {
+  "ref": "refs/heads/main",
+  "repository": "https://github.com/VitroTech/coderoot-gate-spike",
+  "path": ".github/workflows/release.yml"
+}
+builder      : https://github.com/actions/runner/github-hosted
