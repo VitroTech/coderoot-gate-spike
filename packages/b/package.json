@@ -1,0 +1,8 @@
+{
+  "name": "@vitrotech/gate-spike-b",
+  "version": "0.0.1",
+  "description": "Throwaway package for trusted-publishing isolation tests. Do not depend on it.",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/VitroTech/coderoot-gate-spike.git" },
+  "files": ["README.md"]
+}
