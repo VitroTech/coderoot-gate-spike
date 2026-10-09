@@ -2,7 +2,7 @@
 #
 # Each test package trusts this workflow file in one GitHub environment only:
 # @vitrotech/gate-spike-a in cust-a (publish), @vitrotech/gate-spike-b in cust-b
-# (stage only). A dispatch picks the package, the environment and the mode, so
+# (stage only), @vitrotech/gate-spike-c in cust-a (publish, restricted access). A dispatch picks the package, the environment and the mode, so
 # a run either matches a package's trust configuration or deliberately does not.
 #
 # `pack` has no publish rights and builds the tarball. The publish job holds the
@@ -15,10 +15,10 @@ on:
   workflow_dispatch:
     inputs:
       package:
-        description: "Test package to pack: a or b"
+        description: "Test package to pack: a, b or c"
         required: true
         type: choice
-        options: [a, b]
+        options: [a, b, c]
       environment:
         description: "Environment for the publish job (none = no environment)"
         required: true
@@ -29,10 +29,16 @@ on:
         required: true
         type: string
       mode:
-        description: "npm publish, or npm stage publish"
+        description: "npm publish, npm stage publish, or claims (decode the OIDC token only, no publish)"
         required: true
         type: choice
-        options: [publish, stage]
+        options: [publish, stage, claims]
+      access:
+        description: "npm access for the publish"
+        required: false
+        default: public
+        type: choice
+        options: [public, restricted]
       provenance:
         description: "Publish with --provenance"
         required: false
@@ -103,13 +109,25 @@ jobs:
           actual="$(shasum -a 256 package.tgz | cut -d' ' -f1)"
           [ "$actual" = "$EXPECTED" ] || { echo "digest mismatch"; exit 1; }
           echo "verified sha256:$actual"
+      # Prints the claims of a token issued to this job, for an audience npm does
+      # not accept. The signature is dropped, so the output cannot be replayed.
+      - name: Decode OIDC claims (payload only)
+        run: |
+          set -euo pipefail
+          tok="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=coderoot-claims-check" | jq -r .value)"
+          p="$(cut -d. -f2 <<<"$tok" | tr '_-' '/+')"
+          while [ $(( ${#p} % 4 )) -ne 0 ]; do p="$p="; done
+          base64 -d <<<"$p" | jq -S 'del(.jti)'
       - name: Publish or stage
+        if: ${{ inputs.mode != 'claims' }}
         env:
           MODE: ${{ inputs.mode }}
+          ACCESS: ${{ inputs.access }}
           PROVENANCE: ${{ inputs.provenance }}
         run: |
           set -euo pipefail
-          args=(package.tgz --registry https://registry.npmjs.org/ --access public --ignore-scripts)
+          args=(package.tgz --registry https://registry.npmjs.org/ --access "$ACCESS" --ignore-scripts)
           if [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
 
@@ -139,11 +157,13 @@ jobs:
           [ "$actual" = "$EXPECTED" ] || { echo "digest mismatch"; exit 1; }
           echo "verified sha256:$actual"
       - name: Publish (expected to be refused)
+        if: ${{ inputs.mode != 'claims' }}
         env:
           MODE: ${{ inputs.mode }}
+          ACCESS: ${{ inputs.access }}
           PROVENANCE: ${{ inputs.provenance }}
         run: |
           set -euo pipefail
-          args=(package.tgz --registry https://registry.npmjs.org/ --access public --ignore-scripts)
+          args=(package.tgz --registry https://registry.npmjs.org/ --access "$ACCESS" --ignore-scripts)
           if [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
