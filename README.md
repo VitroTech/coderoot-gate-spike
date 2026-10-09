@@ -17,7 +17,7 @@ input for it.
 .github/workflows/rogue.yml     an untrusted-workflow publish attempt (expected to fail)
 .github/workflows/env-publish.yml  per-environment publish checks for the two packages below
 package/                        the throwaway package source
-packages/a, packages/b          @vitrotech/gate-spike-a and -b, README-only test packages
+packages/a, packages/b, packages/c  @vitrotech/gate-spike-a, -b and -c, README-only test packages
 scripts/dispatch.sh             start a publish from a tarball reference
 scripts/check-workflow.sh       static checks on the release workflow
 scripts/local-dry-run.sh        local packaging, digest, and registry rehearsal
@@ -88,11 +88,13 @@ package trusts this workflow file in one environment only:
 ```
 @vitrotech/gate-spike-a   environment cust-a   npm publish
 @vitrotech/gate-spike-b   environment cust-b   npm stage publish only
+@vitrotech/gate-spike-c   environment cust-a   npm publish, restricted access
 ```
 
 Both environments allow deployments from `main` only and hold no secrets. A dispatch picks the
-package, the environment (`none` runs the publish job with no environment), the version and the
-mode. A run whose environment, branch or mode does not match the package's trust configuration is
+package, the environment (`none` runs the publish job with no environment), the version, the npm
+access and the mode. Mode `claims` publishes nothing: the job decodes the OIDC token it is issued
+and prints its claims. A run whose environment, branch or mode does not match the package's trust configuration is
 expected to be refused by GitHub or by npm.
 
 The `pack` job has no publish rights. The publish job verifies the tarball's digest and runs only
