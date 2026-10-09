@@ -4,12 +4,12 @@
 # These text-based checks are smoke tests, not a complete security audit.
 
 set -euo pipefail
-WF="$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/release.yml"
+WF="${1:-$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/release.yml}"
 
 # Comments explain why things are absent, so strip them before asserting absence.
 BODY="$(sed 's/#.*//' "$WF")"
 # Shell bodies only, for the injection check.
-RUNS="$(awk '/run: \|/{f=1;next} /^      - /{f=0} f' "$WF")"
+RUNS="$(awk 'f{ match($0,/^ */); if ($0 ~ /^[[:space:]]*$/ || RLENGTH>ind) {print; next}; f=0 } /run: \|/{ match($0,/^ */); ind=RLENGTH; f=1 }' "$WF")"
 
 pass=0; fail=0
 check() { # name, condition-result

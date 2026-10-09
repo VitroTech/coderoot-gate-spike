@@ -15,7 +15,9 @@ input for it.
 ```
 .github/workflows/release.yml   the publish workflow (npm trusts this exact path)
 .github/workflows/rogue.yml     an untrusted-workflow publish attempt (expected to fail)
+.github/workflows/env-publish.yml  per-environment publish checks for the two packages below
 package/                        the throwaway package source
+packages/a, packages/b          @vitrotech/gate-spike-a and -b, README-only test packages
 scripts/dispatch.sh             start a publish from a tarball reference
 scripts/check-workflow.sh       static checks on the release workflow
 scripts/local-dry-run.sh        local packaging, digest, and registry rehearsal
@@ -25,7 +27,7 @@ evidence/                       captured output from the publish runs
 ## Run it
 
 ```bash
-scripts/check-workflow.sh                        # 11 static workflow checks
+scripts/check-workflow.sh [workflow]             # 11 static workflow checks (default: release.yml)
 scripts/local-dry-run.sh                         # uses npm and localhost:4873
 scripts/dispatch.sh <tarball-url> [--dry-run]    # the real publish
 ```
@@ -77,3 +79,21 @@ curl -s https://registry.npmjs.org/@vitrotech/gate-spike \
 
 npm refuses `--provenance` while the source repository is private, answering 422 after it has
 already signed the statement and written it to the transparency log.
+
+## Per-environment checks
+
+`env-publish.yml` publishes one of two test packages from a chosen GitHub environment. Each
+package trusts this workflow file in one environment only:
+
+```
+@vitrotech/gate-spike-a   environment cust-a   npm publish
+@vitrotech/gate-spike-b   environment cust-b   npm stage publish only
+```
+
+Both environments allow deployments from `main` only and hold no secrets. A dispatch picks the
+package, the environment (`none` runs the publish job with no environment), the version and the
+mode. A run whose environment, branch or mode does not match the package's trust configuration is
+expected to be refused by GitHub or by npm.
+
+The `pack` job has no publish rights. The publish job verifies the tarball's digest and runs only
+the pinned npm, with the registry, access and `--ignore-scripts` given on the command line.
