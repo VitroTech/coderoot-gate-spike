@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           case "$VERSION" in (*[!0-9.]*|"") echo "version must be digits and dots"; exit 1;; esac
           cd "packages/$PKG"
-          npm version "$VERSION" --no-git-tag-version --ignore-scripts >/dev/null
+          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts >/dev/null
           npm pack --ignore-scripts --pack-destination ../.. >/dev/null
           cd ../..
           mv ./*.tgz package.tgz
