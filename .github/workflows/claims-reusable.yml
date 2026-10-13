@@ -1,0 +1,26 @@
+# Reusable workflow that prints the claims of the OIDC token issued to its job.
+# Called by claims-caller.yml to show which workflow refs a reusable job carries.
+
+name: claims-reusable
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  claims:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      # Audience npm does not accept; the signature is dropped before printing.
+      - name: Decode OIDC claims (payload only)
+        run: |
+          set -euo pipefail
+          tok="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=coderoot-claims-check" | jq -r .value)"
+          p="$(cut -d. -f2 <<<"$tok" | tr '_-' '/+')"
+          while [ $(( ${#p} % 4 )) -ne 0 ]; do p="$p="; done
+          base64 -d <<<"$p" | jq -S 'del(.jti)'
