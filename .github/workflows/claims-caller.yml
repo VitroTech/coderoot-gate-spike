@@ -1,0 +1,14 @@
+# Calls claims-reusable.yml, so the token is issued to a job inside a reusable workflow.
+
+name: claims-caller
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  call:
+    permissions:
+      id-token: write
+    uses: ./.github/workflows/claims-reusable.yml
