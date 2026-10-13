@@ -39,6 +39,11 @@ on:
         default: public
         type: choice
         options: [public, restricted]
+      readme-note:
+        description: "Optional line appended to the package README, to change the bytes of a version"
+        required: false
+        default: ""
+        type: string
       provenance:
         description: "Publish with --provenance"
         required: false
@@ -68,10 +73,13 @@ jobs:
         env:
           PKG: ${{ inputs.package }}
           VERSION: ${{ inputs.version }}
+          NOTE: ${{ inputs.readme-note }}
         run: |
           set -euo pipefail
           case "$VERSION" in (*[!0-9.]*|"") echo "version must be digits and dots"; exit 1;; esac
+          case "$NOTE" in (*[!a-z0-9-]*) echo "readme-note: lowercase letters, digits and dashes only"; exit 1;; esac
           cd "packages/$PKG"
+          if [ -n "$NOTE" ]; then printf '\n%s\n' "$NOTE" >> README.md; fi
           npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts >/dev/null
           npm pack --ignore-scripts --pack-destination ../.. >/dev/null
           cd ../..
