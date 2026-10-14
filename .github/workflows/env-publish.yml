@@ -44,6 +44,12 @@ on:
         required: false
         default: ""
         type: string
+      provenance-source:
+        description: "npm: npm makes the provenance at publish. file: the job makes the bundle first and passes it with --provenance-file"
+        required: false
+        default: npm
+        type: choice
+        options: [npm, file]
       provenance:
         description: "Publish with --provenance"
         required: false
@@ -100,6 +106,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: write
     steps:
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -117,6 +124,35 @@ jobs:
           actual="$(shasum -a 256 package.tgz | cut -d' ' -f1)"
           [ "$actual" = "$EXPECTED" ] || { echo "digest mismatch"; exit 1; }
           echo "verified sha256:$actual"
+      # With provenance-source file, the bundle npm attaches is made here first, so
+      # the job holds the exact file. npm requires one subject: the package's purl
+      # with the tarball's SHA-512.
+      - name: Provenance subject
+        if: ${{ inputs.provenance-source == 'file' && inputs.mode != 'claims' }}
+        env:
+          PKG: ${{ inputs.package }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          sha512="$(shasum -a 512 package.tgz | cut -d' ' -f1)"
+          printf '%s  pkg:npm/%%40vitrotech/gate-spike-%s@%s\n' "$sha512" "$PKG" "$VERSION" > subject.checksums.txt
+          cat subject.checksums.txt
+      - name: Make the provenance bundle
+        id: attest
+        if: ${{ inputs.provenance-source == 'file' && inputs.mode != 'claims' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: subject.checksums.txt
+      - name: Keep the bundle
+        if: ${{ inputs.provenance-source == 'file' && inputs.mode != 'claims' }}
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$BUNDLE" provenance.sigstore.json
+          echo "bundle sha256:$(shasum -a 256 provenance.sigstore.json | cut -d' ' -f1)"
+          jq -r '.dsseEnvelope.payload' provenance.sigstore.json | base64 -d | jq -c '{subject, predicateType}'
+          jq -c '{mediaType, logIndex: .verificationMaterial.tlogEntries[0].logIndex}' provenance.sigstore.json
       # Prints the claims of a token issued to this job, for an audience npm does
       # not accept. The signature is dropped, so the output cannot be replayed.
       - name: Decode OIDC claims (payload only)
@@ -133,10 +169,12 @@ jobs:
           MODE: ${{ inputs.mode }}
           ACCESS: ${{ inputs.access }}
           PROVENANCE: ${{ inputs.provenance }}
+          PROVENANCE_SOURCE: ${{ inputs.provenance-source }}
         run: |
           set -euo pipefail
           args=(package.tgz --registry https://registry.npmjs.org/ --access "$ACCESS" --ignore-scripts)
-          if [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
+          if [ "$PROVENANCE_SOURCE" = "file" ]; then args+=(--provenance-file provenance.sigstore.json)
+          elif [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
 
   publish-no-environment:
