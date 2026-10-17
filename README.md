@@ -91,7 +91,7 @@ package trusts this workflow file in one environment only:
 @vitrotech/gate-spike-c   environment cust-a   npm publish, restricted access
 ```
 
-Both environments allow deployments from `main` only and hold no secrets. A dispatch picks the
+Both environments allow deployments from `main` only. Neither holds a secret. A dispatch picks the
 package, the environment (`none` runs the publish job with no environment), the version, the npm
 access and the mode. Mode `claims` publishes nothing: the job decodes the OIDC token it is issued
 and prints its claims. A run whose environment, branch or mode does not match the package's trust configuration is
@@ -99,3 +99,15 @@ expected to be refused by GitHub or by npm.
 
 The `pack` job has no publish rights. The publish job verifies the tarball's digest and runs only
 the pinned npm, with the registry, access and `--ignore-scripts` given on the command line.
+
+### Submitting to CodeRoot
+
+With `submit`, the release goes to CodeRoot for a person's approval once it reaches npm: flow
+`published` after `npm publish`, flow `staged` after `npm stage publish`. A staged submission needs
+`provenance-source: file`, because the gate checks the exact bundle npm attaches.
+
+The `submit` job runs in a third environment, `coderoot-submit`, which allows `main` only and holds
+one secret: a read-only key for the private CodeRoot Action, which the job checks out itself. npm
+trusts this workflow only in `cust-a` and `cust-b`, so the identity token `submit` holds is refused
+by npm and the job cannot publish. It signs in to CodeRoot with that token; no CodeRoot or npm token
+is stored anywhere.

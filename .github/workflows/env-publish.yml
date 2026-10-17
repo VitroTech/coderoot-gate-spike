@@ -8,6 +8,11 @@
 # `pack` has no publish rights and builds the tarball. The publish job holds the
 # OIDC token and only verifies and publishes; nothing is installed, built or
 # packed there apart from the pinned npm itself.
+#
+# With `submit`, the release then goes to CodeRoot for a person's approval:
+# flow published after `npm publish`, flow staged after `npm stage publish`.
+# `submit` runs in `coderoot-submit`, an environment npm does not trust, so it
+# cannot publish; it checks out the private Action itself with a read-only key.
 
 name: env-publish
 
@@ -55,6 +60,16 @@ on:
         required: false
         default: true
         type: boolean
+      submit:
+        description: "Submit the release to CodeRoot afterwards (staged needs provenance-source file)"
+        required: false
+        default: false
+        type: boolean
+      action-ref:
+        description: "coderoot-action ref the submit job runs"
+        required: false
+        default: v1
+        type: string
 
 permissions: {}
 
@@ -75,6 +90,18 @@ jobs:
         with:
           node-version: "22"
           cache: ""
+      - name: Check the submit inputs
+        if: ${{ inputs.submit }}
+        env:
+          MODE: ${{ inputs.mode }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          PROVENANCE_SOURCE: ${{ inputs.provenance-source }}
+        run: |
+          set -euo pipefail
+          [ "$MODE" != "claims" ] || { echo "submit needs mode publish or stage"; exit 1; }
+          [ "$ENVIRONMENT" != "none" ] || { echo "submit needs a publish environment"; exit 1; }
+          # A staged release proves itself with the bundle npm attaches, so the job must hold it.
+          [ "$MODE" != "stage" ] || [ "$PROVENANCE_SOURCE" = "file" ] || { echo "submit with mode stage needs provenance-source file"; exit 1; }
       - id: pack
         env:
           PKG: ${{ inputs.package }}
@@ -107,6 +134,9 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    outputs:
+      stage_id: ${{ steps.release.outputs.stage_id }}
+      bundle_b64: ${{ steps.release.outputs.bundle_b64 }}
     steps:
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -175,7 +205,25 @@ jobs:
           args=(package.tgz --registry https://registry.npmjs.org/ --access "$ACCESS" --ignore-scripts)
           if [ "$PROVENANCE_SOURCE" = "file" ]; then args+=(--provenance-file provenance.sigstore.json)
           elif [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
-          if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
+          # The submit job reads the stage id from this output.
+          if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}" 2>&1 | tee npm-output.txt
+          else npm publish "${args[@]}" 2>&1 | tee npm-output.txt; fi
+      # Handed to the submit job as job outputs, not an artifact: an artifact in a
+      # public repository is downloadable by anyone, including a staged tarball
+      # before npm approves it.
+      - name: Hand the release to the submit job
+        id: release
+        if: ${{ inputs.submit && inputs.mode != 'claims' }}
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "stage" ]; then
+            stage_id="$(grep -oE 'staged with id [0-9a-f-]{36}' npm-output.txt | awk '{print $4}')"
+            [ -n "$stage_id" ] || { echo "no stage id in the npm output"; exit 1; }
+            echo "stage_id=$stage_id" >> "$GITHUB_OUTPUT"
+            echo "bundle_b64=$(base64 -w0 provenance.sigstore.json)" >> "$GITHUB_OUTPUT"
+          fi
 
   publish-no-environment:
     if: ${{ inputs.environment == 'none' }}
@@ -213,3 +261,52 @@ jobs:
           args=(package.tgz --registry https://registry.npmjs.org/ --access "$ACCESS" --ignore-scripts)
           if [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
+
+  # `coderoot-submit` allows main only and holds one secret, the read-only key
+  # for the private Action. npm trusts this workflow only in cust-a and cust-b,
+  # so the identity token here cannot publish. It still names this workflow
+  # file, which the workspace link and the release's provenance both match.
+  # The Action is checked out in this job and never leaves it: an artifact in a
+  # public repository is downloadable by anyone.
+  submit:
+    if: ${{ inputs.submit }}
+    needs: [pack, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: coderoot-submit
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: VitroTech/coderoot-action
+          ref: ${{ inputs.action-ref }}
+          ssh-key: ${{ secrets.CODEROOT_ACTION_KEY }}
+          persist-credentials: false
+          path: coderoot-action
+      - name: Restore and verify the release
+        env:
+          TB64: ${{ needs.pack.outputs.tarball_b64 }}
+          EXPECTED: ${{ needs.pack.outputs.sha256 }}
+          BUNDLE_B64: ${{ needs.publish.outputs.bundle_b64 }}
+        run: |
+          set -euo pipefail
+          mkdir release
+          echo "$TB64" | base64 -d > release/package.tgz
+          actual="$(shasum -a 256 release/package.tgz | cut -d' ' -f1)"
+          [ "$actual" = "$EXPECTED" ] || { echo "digest mismatch"; exit 1; }
+          if [ -n "$BUNDLE_B64" ]; then echo "$BUNDLE_B64" | base64 -d > release/provenance.sigstore.json; fi
+      - name: Submit to CodeRoot
+        id: submit
+        uses: ./coderoot-action
+        with:
+          mode: submit
+          flow: ${{ inputs.mode == 'stage' && 'staged' || 'published' }}
+          artifact: release/package.tgz
+          name: "@vitrotech/gate-spike-${{ inputs.package }}"
+          version: ${{ inputs.version }}
+          stage-id: ${{ needs.publish.outputs.stage_id }}
+          provenance-bundle: ${{ inputs.mode == 'stage' && 'release/provenance.sigstore.json' || '' }}
+          submit-endpoint: https://secure.coderoot.app
+          note: "env-publish run ${{ github.run_id }}"
