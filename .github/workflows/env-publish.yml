@@ -11,8 +11,8 @@
 #
 # With `submit`, the release then goes to CodeRoot for a person's approval:
 # flow published after `npm publish`, flow staged after `npm stage publish`.
-# `coderoot-action` fetches the Action with a read-only key and cannot mint a
-# token; `submit` has no environment, so npm's trust does not reach it.
+# `submit` runs in `coderoot-submit`, an environment npm does not trust, so it
+# cannot publish; it checks out the private Action itself with a read-only key.
 
 name: env-publish
 
@@ -134,6 +134,9 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    outputs:
+      stage_id: ${{ steps.release.outputs.stage_id }}
+      bundle_b64: ${{ steps.release.outputs.bundle_b64 }}
     steps:
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -205,17 +208,22 @@ jobs:
           # The submit job reads the stage id from this output.
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}" 2>&1 | tee npm-output.txt
           else npm publish "${args[@]}" 2>&1 | tee npm-output.txt; fi
-      - name: Keep the release for the submit job
+      # Handed to the submit job as job outputs, not an artifact: an artifact in a
+      # public repository is downloadable by anyone, including a staged tarball
+      # before npm approves it.
+      - name: Hand the release to the submit job
+        id: release
         if: ${{ inputs.submit && inputs.mode != 'claims' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release
-          path: |
-            package.tgz
-            npm-output.txt
-            provenance.sigstore.json
-          if-no-files-found: error
-          retention-days: 7
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "stage" ]; then
+            stage_id="$(grep -oE 'staged with id [0-9a-f-]{36}' npm-output.txt | awk '{print $4}')"
+            [ -n "$stage_id" ] || { echo "no stage id in the npm output"; exit 1; }
+            echo "stage_id=$stage_id" >> "$GITHUB_OUTPUT"
+            echo "bundle_b64=$(base64 -w0 provenance.sigstore.json)" >> "$GITHUB_OUTPUT"
+          fi
 
   publish-no-environment:
     if: ${{ inputs.environment == 'none' }}
@@ -254,16 +262,21 @@ jobs:
           if [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
 
-  # The read-only key for the private Action is an environment secret on cust-a,
-  # limited to main. This job has no id-token permission, so it cannot mint the
-  # token npm's trusted publishing needs.
-  coderoot-action:
+  # `coderoot-submit` allows main only and holds one secret, the read-only key
+  # for the private Action. npm trusts this workflow only in cust-a and cust-b,
+  # so the identity token here cannot publish. It still names this workflow
+  # file, which the workspace link and the release's provenance both match.
+  # The Action is checked out in this job and never leaves it: an artifact in a
+  # public repository is downloadable by anyone.
+  submit:
     if: ${{ inputs.submit }}
+    needs: [pack, publish]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment: cust-a
+    timeout-minutes: 10
+    environment: coderoot-submit
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -272,34 +285,18 @@ jobs:
           ssh-key: ${{ secrets.CODEROOT_ACTION_KEY }}
           persist-credentials: false
           path: coderoot-action
-      - run: rm -rf coderoot-action/.git
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coderoot-action
-          path: coderoot-action
-          if-no-files-found: error
-          retention-days: 1
-
-  # No environment: npm trusts this workflow only in cust-a and cust-b, so this
-  # job cannot publish. Its identity token still names this workflow file, which
-  # the workspace link and the release's provenance both match.
-  submit:
-    if: ${{ inputs.submit }}
-    needs: [publish, coderoot-action]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: coderoot-action
-          path: coderoot-action
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release
-          path: release
+      - name: Restore and verify the release
+        env:
+          TB64: ${{ needs.pack.outputs.tarball_b64 }}
+          EXPECTED: ${{ needs.pack.outputs.sha256 }}
+          BUNDLE_B64: ${{ needs.publish.outputs.bundle_b64 }}
+        run: |
+          set -euo pipefail
+          mkdir release
+          echo "$TB64" | base64 -d > release/package.tgz
+          actual="$(shasum -a 256 release/package.tgz | cut -d' ' -f1)"
+          [ "$actual" = "$EXPECTED" ] || { echo "digest mismatch"; exit 1; }
+          if [ -n "$BUNDLE_B64" ]; then echo "$BUNDLE_B64" | base64 -d > release/provenance.sigstore.json; fi
       - name: Submit to CodeRoot
         id: submit
         uses: ./coderoot-action
@@ -309,7 +306,7 @@ jobs:
           artifact: release/package.tgz
           name: "@vitrotech/gate-spike-${{ inputs.package }}"
           version: ${{ inputs.version }}
-          npm-output: ${{ inputs.mode == 'stage' && 'release/npm-output.txt' || '' }}
+          stage-id: ${{ needs.publish.outputs.stage_id }}
           provenance-bundle: ${{ inputs.mode == 'stage' && 'release/provenance.sigstore.json' || '' }}
           submit-endpoint: https://secure.coderoot.app
           note: "env-publish run ${{ github.run_id }}"
