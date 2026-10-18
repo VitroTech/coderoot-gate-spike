@@ -127,8 +127,14 @@ staged release is approved. Use these README-only throwaway packages; removing a
 uploads protects the private Action source but does not make the release bytes confidential.
 
 If publication succeeds and submission fails, `Re-run failed jobs` retains the original
-provenance while issuing the submit job a token with a later `run_attempt`. The gate currently
-requires an exact attempt match, so this is not a supported recovery path. Re-running all jobs
-tries to publish the same version again. Bounded retries inside the original Action step can
-handle transient failures; recovery after that job fails needs a separate design and backend
-change. A claims-only run does not validate submission or this recovery behavior.
+provenance while issuing the submit job a token with a later `run_attempt`. The gate accepts
+signed provenance from an equal or earlier attempt of the same run, with the same repository,
+workflow and source commit/ref. It still checks that the certificate and signed statement
+identify the exact producer invocation. This backend recovery support was deployed on
+October 18, 2026.
+
+The Action uploads the tarball and staged bundle afresh on each attempt: old upload IDs
+cannot cross attempts. An already accepted submission remains subject to the gate's duplicate
+checks. Re-run only the failed submit job; re-running all jobs tries to publish the same
+version again. A claims-only run does not validate submission or this recovery behavior;
+live acceptance still needs both flows exercised against the gate.
