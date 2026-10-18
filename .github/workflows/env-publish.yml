@@ -208,9 +208,8 @@ jobs:
           # The submit job reads the stage id from this output.
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}" 2>&1 | tee npm-output.txt
           else npm publish "${args[@]}" 2>&1 | tee npm-output.txt; fi
-      # Handed to the submit job as job outputs, not an artifact: an artifact in a
-      # public repository is downloadable by anyone, including a staged tarball
-      # before npm approves it.
+      # Job outputs avoid release artifacts, but are not private: the restore
+      # steps expose TB64 in public logs. Use throwaway packages only.
       - name: Hand the release to the submit job
         id: release
         if: ${{ inputs.submit && inputs.mode != 'claims' }}

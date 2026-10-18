@@ -19,7 +19,7 @@ input for it.
 package/                        the throwaway package source
 packages/a, packages/b, packages/c  @vitrotech/gate-spike-a, -b and -c, README-only test packages
 scripts/dispatch.sh             start a publish from a tarball reference
-scripts/check-workflow.sh       static checks on the release workflow
+scripts/check-workflow.sh       static checks on both publishing workflows
 scripts/local-dry-run.sh        local packaging, digest, and registry rehearsal
 evidence/                       captured output from the publish runs
 ```
@@ -27,7 +27,8 @@ evidence/                       captured output from the publish runs
 ## Run it
 
 ```bash
-scripts/check-workflow.sh [workflow]             # 11 static workflow checks (default: release.yml)
+scripts/check-workflow.sh [workflow]             # checks release.yml and env-publish.yml by default
+python3 scripts/test-check-workflow.py           # offline regression checks for the checker
 scripts/local-dry-run.sh                         # uses npm and localhost:4873
 scripts/dispatch.sh <tarball-url> [--dry-run]    # the real publish
 ```
@@ -111,3 +112,23 @@ one secret: a read-only key for the private CodeRoot Action, which the job check
 trusts this workflow only in `cust-a` and `cust-b`, so the identity token `submit` holds is refused
 by npm and the job cannot publish. It signs in to CodeRoot with that token; no CodeRoot or npm token
 is stored anywhere.
+
+The environment name must stay `coderoot-submit`; putting this job in `cust-a` or `cust-b`
+would give its identity token npm publishing authority. Configure this environment with a
+deployment branch rule of type `branch`, name `main`, and install `CODEROOT_ACTION_KEY` there
+only. Its public half must be a read-only deploy key on `VitroTech/coderoot-action`.
+The local checker verifies the workflow references, not the live GitHub environment settings.
+
+### Limits of the submission sample
+
+Job outputs are not a private transport. GitHub prints the `TB64` environment value in the
+restore steps, so the tarball can be reconstructed from public workflow logs even before a
+staged release is approved. Use these README-only throwaway packages; removing artifact
+uploads protects the private Action source but does not make the release bytes confidential.
+
+If publication succeeds and submission fails, `Re-run failed jobs` retains the original
+provenance while issuing the submit job a token with a later `run_attempt`. The gate currently
+requires an exact attempt match, so this is not a supported recovery path. Re-running all jobs
+tries to publish the same version again. Bounded retries inside the original Action step can
+handle transient failures; recovery after that job fails needs a separate design and backend
+change. A claims-only run does not validate submission or this recovery behavior.
