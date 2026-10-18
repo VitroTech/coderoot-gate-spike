@@ -4,7 +4,15 @@
 # These text-based checks are smoke tests, not a complete security audit.
 
 set -euo pipefail
-WF="${1:-$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/release.yml}"
+if [ "$#" -eq 0 ]; then
+  ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  result=0
+  for workflow in release.yml env-publish.yml; do
+    bash "$0" "$ROOT/.github/workflows/$workflow" || result=1
+  done
+  exit "$result"
+fi
+WF="$1"
 
 # Comments explain why things are absent, so strip them before asserting absence.
 BODY="$(sed 's/#.*//' "$WF")"
@@ -12,29 +20,56 @@ BODY="$(sed 's/#.*//' "$WF")"
 RUNS="$(awk 'f{ match($0,/^ */); if ($0 ~ /^[[:space:]]*$/ || RLENGTH>ind) {print; next}; f=0 } /run: \|/{ match($0,/^ */); ind=RLENGTH; f=1 }' "$WF")"
 
 pass=0; fail=0
-check() { # name, condition-result
-  if [ "$2" = "0" ]; then printf '  OK    %s\n' "$1"; pass=$((pass+1));
-  else printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); fi
+check() { # name, command and arguments; report every failure even with set -e.
+  local name="$1"
+  shift
+  if "$@"; then printf '  OK    %s\n' "$name"; pass=$((pass+1));
+  else printf '  FAIL  %s\n' "$name"; fail=$((fail+1)); fi
 }
-has()  { grep -qE -e "$1" <<<"$BODY"; }
-lacks(){ ! grep -qE -e "$1" <<<"$BODY"; }
+has()  { grep -qE -e "$1" <<<"${2-$BODY}"; }
+lacks(){ ! has "$@"; }
+
+# Job blocks have two-space indentation in these workflows. This is deliberately
+# a check of the checked-in layout, not a general YAML parser.
+SUBMIT="$(awk '/^  [A-Za-z0-9_-]+:/{s=($0 ~ /^  submit:/)} s' <<<"$BODY")"
+OUTSIDE_SUBMIT="$(awk '/^  [A-Za-z0-9_-]+:/{s=($0 ~ /^  submit:/)} !s' <<<"$BODY")"
+SECRET_REFERENCE='(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)'
+approved_key_only() {
+  local references
+  references="$(grep -E "$SECRET_REFERENCE" <<<"$SUBMIT" | sed -E 's/^[[:space:]]+//' || true)"
+  [ "$references" = 'ssh-key: ${{ secrets.CODEROOT_ACTION_KEY }}' ]
+}
+pinned_uses() {
+  local ref
+  while read -r ref; do
+    if [ -n "$SUBMIT" ] && [ "$ref" = './coderoot-action' ]; then continue; fi
+    [[ "$ref" =~ @[0-9a-f]{40}$ ]] || return 1
+  done < <(grep -oE 'uses:[[:space:]]*[^[:space:]]+' <<<"$BODY" | awk '{print $2}')
+}
 
 echo "workflow: ${WF#"$PWD"/}"
-has 'workflow_dispatch:';                    check "dispatch-triggered"            $?
-lacks 'pull_request_target';                 check "no pull_request_target"        $?
-lacks 'secrets\.';                           check "no secrets referenced"         $?
-lacks 'NPM_TOKEN|_authToken|NODE_AUTH_TOKEN';check "no npm credential"             $?
-has 'id-token:[[:space:]]*write';            check "id-token: write"               $?
-has 'contents:[[:space:]]*read';             check "contents: read only"           $?
-has 'cache:[[:space:]]*""';                  check "actions cache off"             $?
-has '--provenance';                          check "--provenance"                  $?
-has 'shasum -a 256';                         check "tarball digest enforced"       $?
-grep -qE '\$\{\{[[:space:]]*inputs\.' <<<"$RUNS" && r=1 || r=0
-check "inputs reach shell via env only" "$r"
-
-# Unpinned = any `uses:` whose ref is not a 40-char SHA.
-if grep -oE 'uses:[[:space:]]*\S+' <<<"$BODY" | grep -vqE '@[0-9a-f]{40}$'; then r=1; else r=0; fi
-check "all actions pinned to SHAs" "$r"
+check "dispatch-triggered" has 'workflow_dispatch:'
+check "no pull_request_target" lacks 'pull_request_target'
+if [ -n "$SUBMIT" ]; then
+  check "submit uses coderoot-submit" has '^    environment: coderoot-submit[[:space:]]*$' "$SUBMIT"
+  check "submit has identity-token permission" has '^      id-token: write[[:space:]]*$' "$SUBMIT"
+  check "only the Action checkout references a secret" approved_key_only
+  check "no secrets outside submit" lacks "$SECRET_REFERENCE" "$OUTSIDE_SUBMIT"
+  check "private Action repository is explicit" has '^          repository: VitroTech/coderoot-action[[:space:]]*$' "$SUBMIT"
+  check "checkout credentials are not persisted" has '^          persist-credentials: false[[:space:]]*$' "$SUBMIT"
+  check "no local actions outside submit" lacks 'uses:[[:space:]]*\./' "$OUTSIDE_SUBMIT"
+  check "no workflow artifact transfer" lacks 'uses:.*actions/(upload|download)-artifact@'
+else
+  check "no secrets referenced" lacks "$SECRET_REFERENCE"
+fi
+check "no npm credential" lacks 'NPM_TOKEN|_authToken|NODE_AUTH_TOKEN'
+check "id-token: write" has 'id-token:[[:space:]]*write'
+check "contents: read only" has 'contents:[[:space:]]*read'
+check "actions cache off" has 'cache:[[:space:]]*""'
+check "--provenance" has '--provenance'
+check "tarball digest enforced" has 'shasum -a 256'
+check "inputs reach shell via env only" lacks '\$\{\{[[:space:]]*inputs\.' "$RUNS"
+check "uses references pinned or approved local Action" pinned_uses
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
