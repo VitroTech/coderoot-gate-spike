@@ -12,7 +12,7 @@
 # With `submit`, the release then goes to CodeRoot for a person's approval:
 # flow published after `npm publish`, flow staged after `npm stage publish`.
 # `submit` runs in `coderoot-submit`, an environment npm does not trust, so it
-# cannot publish; it checks out the private Action itself with a read-only key.
+# cannot publish; it runs the public CodeRoot Action pinned to a commit.
 
 name: env-publish
 
@@ -65,11 +65,6 @@ on:
         required: false
         default: false
         type: boolean
-      action-ref:
-        description: "coderoot-action ref the submit job runs"
-        required: false
-        default: v1
-        type: string
 
 permissions: {}
 
@@ -261,12 +256,10 @@ jobs:
           if [ "$PROVENANCE" = "true" ]; then args+=(--provenance); fi
           if [ "$MODE" = "stage" ]; then npm stage publish "${args[@]}"; else npm publish "${args[@]}"; fi
 
-  # `coderoot-submit` allows main only and holds one secret, the read-only key
-  # for the private Action. npm trusts this workflow only in cust-a and cust-b,
-  # so the identity token here cannot publish. It still names this workflow
-  # file, which the workspace link and the release's provenance both match.
-  # The Action is checked out in this job and never leaves it: an artifact in a
-  # public repository is downloadable by anyone.
+  # `coderoot-submit` allows main only and holds no secrets. npm trusts this
+  # workflow only in cust-a and cust-b, so the identity token here cannot
+  # publish. It still names this workflow file, which the workspace link and
+  # the release's provenance both match.
   submit:
     if: ${{ inputs.submit }}
     needs: [pack, publish]
@@ -277,13 +270,6 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: VitroTech/coderoot-action
-          ref: ${{ inputs.action-ref }}
-          ssh-key: ${{ secrets.CODEROOT_ACTION_KEY }}
-          persist-credentials: false
-          path: coderoot-action
       - name: Restore and verify the release
         env:
           TB64: ${{ needs.pack.outputs.tarball_b64 }}
@@ -298,7 +284,7 @@ jobs:
           if [ -n "$BUNDLE_B64" ]; then echo "$BUNDLE_B64" | base64 -d > release/provenance.sigstore.json; fi
       - name: Submit to CodeRoot
         id: submit
-        uses: ./coderoot-action
+        uses: coderoot-eth/action@b223537eb81026b90477e4e02e70d9c4fcdf7d95 # v1.1.1
         with:
           mode: submit
           flow: ${{ inputs.mode == 'stage' && 'staged' || 'published' }}

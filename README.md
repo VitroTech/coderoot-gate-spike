@@ -108,23 +108,22 @@ With `submit`, the release goes to CodeRoot for a person's approval once it reac
 `provenance-source: file`, because the gate checks the exact bundle npm attaches.
 
 The `submit` job runs in a third environment, `coderoot-submit`, which allows `main` only and holds
-one secret: a read-only key for the private CodeRoot Action, which the job checks out itself. npm
-trusts this workflow only in `cust-a` and `cust-b`, so the identity token `submit` holds is refused
-by npm and the job cannot publish. It signs in to CodeRoot with that token; no CodeRoot or npm token
-is stored anywhere.
+no secrets. It runs the public [CodeRoot Action](https://github.com/coderoot-eth/action), pinned to
+the commit of `v1.1.1`. npm trusts this workflow only in `cust-a` and `cust-b`, so the identity
+token `submit` holds is refused by npm and the job cannot publish. It signs in to CodeRoot with that
+token; no CodeRoot or npm token is stored anywhere.
 
 The environment name must stay `coderoot-submit`; putting this job in `cust-a` or `cust-b`
 would give its identity token npm publishing authority. Configure this environment with a
-deployment branch rule of type `branch`, name `main`, and install `CODEROOT_ACTION_KEY` there
-only. Its public half must be a read-only deploy key on `VitroTech/coderoot-action`.
+deployment branch rule of type `branch`, name `main`.
 The local checker verifies the workflow references, not the live GitHub environment settings.
 
 ### Limits of the submission sample
 
 Job outputs are not a private transport. GitHub prints the `TB64` environment value in the
 restore steps, so the tarball can be reconstructed from public workflow logs even before a
-staged release is approved. Use these README-only throwaway packages; removing artifact
-uploads protects the private Action source but does not make the release bytes confidential.
+staged release is approved. Use these README-only throwaway packages; the workflow uploads no
+artifacts of its own, but that does not make the release bytes confidential.
 
 If publication succeeds and submission fails, `Re-run failed jobs` retains the original
 provenance while issuing the submit job a token with a later `run_attempt`. The gate accepts
