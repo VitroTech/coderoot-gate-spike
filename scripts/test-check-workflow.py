@@ -56,40 +56,48 @@ class WorkflowChecks(unittest.TestCase):
                     "submit uses coderoot-submit",
                 )
 
-    def test_action_key_cannot_reach_other_jobs(self):
+    def test_secrets_cannot_be_referenced(self):
+        for job in ("pack", "submit"):
+            with self.subTest(job=job):
+                self.assert_rejected(
+                    ENV_PUBLISH.replace(
+                        f"\n  {job}:\n",
+                        f"\n  {job}:\n    env:\n      KEY: ${{{{ secrets['OTHER_KEY'] }}}}\n",
+                    ),
+                    "no secrets referenced",
+                )
+
+    def test_submit_must_run_the_public_action(self):
         self.assert_rejected(
             ENV_PUBLISH.replace(
-                "  pack:\n",
-                "  pack:\n    env:\n      ACTION_KEY: ${{ secrets.CODEROOT_ACTION_KEY }}\n",
+                "uses: coderoot-eth/action@", "uses: VitroTech/coderoot-action@"
             ),
-            "no secrets outside submit",
+            "submit runs the public CodeRoot Action",
         )
 
-    def test_additional_secret_cannot_reach_submit(self):
+    def test_local_action_is_refused(self):
         self.assert_rejected(
-            ENV_PUBLISH + "          token: ${{ secrets['OTHER_KEY'] }}\n",
-            "only the Action checkout references a secret",
+            ENV_PUBLISH + "      - uses: ./coderoot-action\n",
+            "no local actions",
         )
 
-    def test_key_cannot_be_printed_by_submit(self):
-        self.assert_rejected(
-            ENV_PUBLISH + '      - run: echo "${{ secrets.CODEROOT_ACTION_KEY }}"\n',
-            "only the Action checkout references a secret",
-        )
-
-    def test_private_action_cannot_be_uploaded(self):
+    def test_release_bytes_cannot_be_uploaded(self):
         self.assert_rejected(
             ENV_PUBLISH
             + "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n"
-            + "        with:\n          path: coderoot-action\n",
+            + "        with:\n          path: release\n",
             "no workflow artifact transfer",
         )
 
     def test_external_uses_must_stay_pinned(self):
-        self.assert_rejected(
-            ENV_PUBLISH.replace("@11bd71901bbe5b1630ceea73d27597364c9af683", "@v4"),
-            "uses references pinned or approved local Action",
-        )
+        for pinned, floating in (
+            ("@11bd71901bbe5b1630ceea73d27597364c9af683", "@v4"),
+            ("@b223537eb81026b90477e4e02e70d9c4fcdf7d95", "@v1"),
+        ):
+            with self.subTest(ref=floating):
+                self.assert_rejected(
+                    ENV_PUBLISH.replace(pinned, floating), "uses references pinned"
+                )
 
     def test_npm_token_cannot_reach_submit(self):
         self.assert_rejected(
